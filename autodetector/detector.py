@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import cv2
 import numpy as np
@@ -232,6 +232,63 @@ class UniversalDetector:
             created_instance_dirs.append(instance_dir)
 
         return created_instance_dirs
+
+    def process_directory(
+        self,
+        image_dir: os.PathLike[str] | str,
+        output_dir: os.PathLike[str] | str,
+        top_k: int,
+        *,
+        prompt: str = DEFAULT_PROMPT,
+        multimask_output: bool = False,
+        image_extensions: Optional[tuple[str, ...]] = (".jpg", ".jpeg", ".png", ".bmp"),
+        progress_callback: Callable[[int, int, Path], None] | None = None,
+        result_callback: Callable[[int, int, Path, int], None] | None = None,
+    ) -> List[List[Path]]:
+        """Run detection over all images inside ``image_dir``.
+
+        This mirrors :meth:`AutoLabeler.process_directory` to provide a lightweight
+        loop that applies :meth:`detect` to each image in a folder while reporting
+        progress through the optional callbacks.
+        """
+
+        image_dir_path = Path(image_dir).expanduser().resolve()
+        output_dir_path = Path(output_dir).expanduser().resolve()
+        output_dir_path.mkdir(parents=True, exist_ok=True)
+
+        image_paths = [
+            image_path
+            for image_path in sorted(image_dir_path.iterdir())
+            if image_path.is_file()
+        ]
+        if image_extensions is not None:
+            allowed = tuple(ext.lower() for ext in image_extensions)
+            image_paths = [
+                image_path
+                for image_path in image_paths
+                if image_path.suffix.lower() in allowed
+            ]
+
+        total = len(image_paths)
+        results: List[List[Path]] = []
+
+        for index, image_path in enumerate(image_paths, start=1):
+            if progress_callback is not None:
+                progress_callback(index, total, image_path)
+
+            instance_dirs = self.detect(
+                image_path=image_path,
+                output_dir=output_dir_path / image_path.stem,
+                top_k=top_k,
+                prompt=prompt,
+                multimask_output=multimask_output,
+            )
+            results.append(instance_dirs)
+
+            if result_callback is not None:
+                result_callback(index, total, image_path, len(instance_dirs))
+
+        return results
 
     ###########
     # HELPERS #
