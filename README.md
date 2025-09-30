@@ -12,6 +12,7 @@ an unlabeled dataset.
 * 🧠 Optional CLIP-based few-shot filtering using a tiny support manifest of positive crops.
 * 🧾 Emits `summary.json` + per-image manifests for downstream dataset conversion.
 * 🌳 Need a barebones GroundingDINO + SAM 2 wrapper without CLIP? Use `UniversalDetector`.
+* 🌲 Calibrated tree-defect dataset builder with trunk/crown gating via `python -m autodetector.tree_dataset`.
 
 ## Installation
 
@@ -123,6 +124,23 @@ python -m autodetector.cli \
 Use `--multimask` to let SAM2 return multiple masks per detection (the pipeline will pick
 the best IoU prediction). When running on CPU or low-memory GPUs consider lowering
 `top_k` and increasing `box_threshold`.
+
+## Tree defect dataset builder
+
+For tree inspection workflows the repository includes a prompt-calibrated dataset builder
+that first isolates trunk and crown regions before launching per-class detections. Each
+class is evaluated independently with anchored prompts, reduced `top_k` and higher
+GroundingDINO thresholds to curb false positives.
+
+```
+python -m autodetector.tree_dataset \
+  --images data/trees \
+  --output outputs/tree_dataset
+```
+
+Each processed image yields a directory containing region proposals alongside
+per-class defect crops, masks and overlays. A consolidated `summary.json` manifest is
+also produced for downstream training pipelines.
 
 ## Next steps
 

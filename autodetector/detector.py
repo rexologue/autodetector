@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -34,6 +35,16 @@ GROUNDING_WEIGHTS = "groundingdino_swint_ogc.pth"
 GROUNDING_CONFIG = "GroundingDINO_SwinT_OGC.cfg.py"
 
 SAM2_REPO = "facebook/sam2-hiera-large"
+
+
+@dataclass
+class DetectionInstance:
+    prompt: str
+    phrase: str
+    score: float
+    bbox: np.ndarray
+    mask: np.ndarray
+    area_ratio: float
 
 
 class UniversalDetector:
@@ -117,6 +128,8 @@ class UniversalDetector:
         *,
         prompt: str = DEFAULT_PROMPT,
         multimask_output: bool = False,
+        box_threshold: Optional[float] = None,
+        text_threshold: Optional[float] = None,
     ) -> List[Path]:
         """Run detection on ``image_path`` and materialise artifacts in ``output_dir``.
 
@@ -140,51 +153,29 @@ class UniversalDetector:
         output_dir = Path(output_dir).expanduser().resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        image_source, image_tensor = load_image(str(image_path))
-        boxes, logits, phrases = predict(
-            model=self._dino_model,
-            image=image_tensor,
-            caption=prompt,
-            box_threshold=self.box_threshold,
-            text_threshold=self.text_threshold,
-            device=self.device,
+        instances = self.predict_instances(
+            image_path=image_path,
+            top_k=top_k,
+            prompt=prompt,
+            multimask_output=multimask_output,
+            box_threshold=box_threshold,
+            text_threshold=text_threshold,
         )
 
-        if boxes.shape[0] == 0:
+        if not instances:
             return []
 
+        image_source, _ = load_image(str(image_path))
         height, width = image_source.shape[:2]
-        boxes_xyxy = box_ops.box_cxcywh_to_xyxy(boxes)
-        boxes_xyxy *= torch.tensor([width, height, width, height], device=boxes_xyxy.device)
-        boxes_xyxy = boxes_xyxy.cpu().numpy()
-        logits = logits.sigmoid().cpu().numpy()
-
-        self._sam_predictor.set_image(image_source)
-
-        items: list[tuple[float, np.ndarray, np.ndarray, np.ndarray, str]] = []
-        for box_xyxy, logit_vec, phrase in zip(boxes_xyxy, logits, phrases):
-            masks_np, iou_predictions_np, _ = self._sam_predictor.predict(
-                box=box_xyxy,
-                multimask_output=multimask_output,
-                normalize_coords=True,
-            )
-            if multimask_output and masks_np.shape[0] > 1:
-                best_idx = int(np.argmax(iou_predictions_np))
-                best_mask = masks_np[best_idx]
-            else:
-                best_mask = masks_np[0]
-
-            mask_bool = best_mask.astype(bool)
-            area_ratio = float(mask_bool.sum()) / float(height * width) if height > 0 and width > 0 else 0.0
-            items.append((area_ratio, box_xyxy, mask_bool, logit_vec, phrase))
-
-        items.sort(key=lambda item: item[0], reverse=True)
-        if top_k > 0:
-            items = items[:top_k]
 
         created_instance_dirs: List[Path] = []
 
-        for idx, (area_ratio, box_xyxy, mask_bool, logit_vec, phrase) in enumerate(items):
+        for idx, instance in enumerate(instances):
+            box_xyxy = instance.bbox
+            mask_bool = instance.mask
+            area_ratio = instance.area_ratio
+            logit_score = instance.score
+            phrase = instance.phrase
             x0_c = max(0, min(int(round(box_xyxy[0])), width - 1))
             y0_c = max(0, min(int(round(box_xyxy[1])), height - 1))
             x1_c = max(x0_c + 1, min(int(round(box_xyxy[2])), width))
@@ -218,7 +209,7 @@ class UniversalDetector:
             report = {
                 "prompt": prompt,
                 "phrase": (phrase or "").strip(),
-                "score": float(np.max(logit_vec)),
+                "score": float(logit_score),
                 "bbox": [int(x0_c), int(y0_c), int(x1_c), int(y1_c)],
                 "mask_area": int(mask_bool.sum()),
                 "area_ratio": float(area_ratio),
@@ -232,6 +223,79 @@ class UniversalDetector:
             created_instance_dirs.append(instance_dir)
 
         return created_instance_dirs
+
+    def predict_instances(
+        self,
+        *,
+        image_path: os.PathLike[str] | str,
+        top_k: int,
+        prompt: str = DEFAULT_PROMPT,
+        multimask_output: bool = False,
+        box_threshold: Optional[float] = None,
+        text_threshold: Optional[float] = None,
+    ) -> List[DetectionInstance]:
+        image_path = Path(image_path).expanduser().resolve()
+        image_source, image_tensor = load_image(str(image_path))
+
+        box_threshold = self.box_threshold if box_threshold is None else box_threshold
+        text_threshold = self.text_threshold if text_threshold is None else text_threshold
+
+        boxes, logits, phrases = predict(
+            model=self._dino_model,
+            image=image_tensor,
+            caption=prompt,
+            box_threshold=box_threshold,
+            text_threshold=text_threshold,
+            device=self.device,
+        )
+
+        if boxes.shape[0] == 0:
+            return []
+
+        height, width = image_source.shape[:2]
+        boxes_xyxy = box_ops.box_cxcywh_to_xyxy(boxes)
+        boxes_xyxy *= torch.tensor([width, height, width, height], device=boxes_xyxy.device)
+        boxes_xyxy = boxes_xyxy.cpu().numpy()
+        logits_np = logits.sigmoid().cpu().numpy()
+
+        self._sam_predictor.set_image(image_source)
+
+        items: list[DetectionInstance] = []
+        total_pixels = float(height * width) if height > 0 and width > 0 else 0.0
+        for idx, (box_xyxy, logit_vec, phrase) in enumerate(zip(boxes_xyxy, logits_np, phrases)):
+            masks_np, iou_predictions_np, _ = self._sam_predictor.predict(
+                box=box_xyxy,
+                multimask_output=multimask_output,
+                normalize_coords=True,
+            )
+            if multimask_output and masks_np.shape[0] > 1:
+                best_idx = int(np.argmax(iou_predictions_np))
+                best_mask = masks_np[best_idx]
+            else:
+                best_mask = masks_np[0]
+
+            mask_bool = best_mask.astype(bool)
+            if total_pixels > 0:
+                area_ratio = float(mask_bool.sum()) / total_pixels
+            else:
+                area_ratio = 0.0
+            score = float(np.max(logit_vec))
+            items.append(
+                DetectionInstance(
+                    prompt=prompt,
+                    phrase=(phrase or "").strip(),
+                    score=score,
+                    bbox=box_xyxy,
+                    mask=mask_bool,
+                    area_ratio=area_ratio,
+                )
+            )
+
+        items.sort(key=lambda instance: instance.area_ratio, reverse=True)
+        if top_k > 0:
+            items = items[:top_k]
+
+        return items
 
     def process_directory(
         self,
