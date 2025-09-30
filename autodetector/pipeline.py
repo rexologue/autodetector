@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Callable, Iterable, List, Optional
 
 import cv2
 import numpy as np
@@ -177,17 +177,29 @@ class AutoLabeler:
         image_dir: Path,
         output_dir: Path,
         image_extensions: Optional[tuple[str, ...]] = (".jpg", ".jpeg", ".png", ".bmp"),
+        progress_callback: Callable[[int, int, Path], None] | None = None,
     ) -> list[list[AutoLabelInstance]]:
         image_dir = image_dir.expanduser().resolve()
         output_dir = output_dir.expanduser().resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
 
         manifest: list[list[AutoLabelInstance]] = []
-        for image_path in sorted(image_dir.iterdir()):
-            if not image_path.is_file():
-                continue
-            if image_extensions and image_path.suffix.lower() not in image_extensions:
-                continue
+        image_paths = [
+            image_path
+            for image_path in sorted(image_dir.iterdir())
+            if image_path.is_file()
+        ]
+        if image_extensions:
+            image_paths = [
+                image_path
+                for image_path in image_paths
+                if image_path.suffix.lower() in image_extensions
+            ]
+
+        total = len(image_paths)
+        for index, image_path in enumerate(image_paths, start=1):
+            if progress_callback is not None:
+                progress_callback(index, total, image_path)
             instances = self.process_image(image_path, output_dir / image_path.stem)
             manifest.append(instances)
         return manifest
