@@ -89,7 +89,22 @@ def main(argv: list[str] | None = None) -> None:
     config = parse_config(args)
     labeler = AutoLabeler(config)
 
-    results = labeler.process_directory(args.images, args.output)
+    def progress_callback(index: int, total: int, image_path: Path) -> None:
+        print(f"[{index}/{total}] Starting {image_path.name}", flush=True)
+
+    def result_callback(index: int, total: int, image_path: Path, count: int) -> None:
+        instance_word = "instance" if count == 1 else "instances"
+        print(
+            f"[{index}/{total}] Found {count} {instance_word} in {image_path.name}",
+            flush=True,
+        )
+
+    results = labeler.process_directory(
+        args.images,
+        args.output,
+        progress_callback=progress_callback,
+        result_callback=result_callback,
+    )
 
     summary = []
     image_paths = sorted(
@@ -119,6 +134,8 @@ def main(argv: list[str] | None = None) -> None:
     summary_path = args.output.expanduser().resolve() / "summary.json"
     with summary_path.open("w", encoding="utf-8") as fp:
         json.dump(summary, fp, indent=2)
+
+    print(f"Auto-labeling complete. Summary written to {summary_path}")
 
 
 if __name__ == "__main__":  # pragma: no cover
