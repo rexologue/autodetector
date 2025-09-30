@@ -90,12 +90,20 @@ def main(argv: list[str] | None = None) -> None:
     labeler = AutoLabeler(config)
 
     def progress_callback(index: int, total: int, image_path: Path) -> None:
-        print(f"[{index}/{total}] Processing {image_path.name}", flush=True)
+        print(f"[{index}/{total}] Starting {image_path.name}", flush=True)
+
+    def result_callback(index: int, total: int, image_path: Path, count: int) -> None:
+        instance_word = "instance" if count == 1 else "instances"
+        print(
+            f"[{index}/{total}] Found {count} {instance_word} in {image_path.name}",
+            flush=True,
+        )
 
     results = labeler.process_directory(
         args.images,
         args.output,
         progress_callback=progress_callback,
+        result_callback=result_callback,
     )
 
     summary = []

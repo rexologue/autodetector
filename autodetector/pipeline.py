@@ -178,6 +178,7 @@ class AutoLabeler:
         output_dir: Path,
         image_extensions: Optional[tuple[str, ...]] = (".jpg", ".jpeg", ".png", ".bmp"),
         progress_callback: Callable[[int, int, Path], None] | None = None,
+        result_callback: Callable[[int, int, Path, int], None] | None = None,
     ) -> list[list[AutoLabelInstance]]:
         image_dir = image_dir.expanduser().resolve()
         output_dir = output_dir.expanduser().resolve()
@@ -202,6 +203,8 @@ class AutoLabeler:
                 progress_callback(index, total, image_path)
             instances = self.process_image(image_path, output_dir / image_path.stem)
             manifest.append(instances)
+            if result_callback is not None:
+                result_callback(index, total, image_path, len(instances))
         return manifest
 
     def process_image(self, image_path: Path, output_dir: Path) -> list[AutoLabelInstance]:
