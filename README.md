@@ -11,6 +11,7 @@ an unlabeled dataset.
 * 🗂️ Generates per-instance folders with mask/box overlays, crops and JSON metadata.
 * 🧠 Optional CLIP-based few-shot filtering using a tiny support manifest of positive crops.
 * 🧾 Emits `summary.json` + per-image manifests for downstream dataset conversion.
+* 🌳 Need a barebones GroundingDINO + SAM 2 wrapper without CLIP? Use `UniversalDetector`.
 
 ## Installation
 
@@ -56,7 +57,7 @@ You can tune this value based on validation results.
 
 ```python
 from pathlib import Path
-from autodetector import AutoLabeler, AutoLabelerConfig
+from autodetector import AutoLabeler, AutoLabelerConfig, UniversalDetector
 
 config = AutoLabelerConfig(
     prompt="defect . damage . crack .",
@@ -71,6 +72,17 @@ labeler = AutoLabeler(config)
 instances_per_image = labeler.process_directory(
     image_dir=Path("data/unlabeled"),
     output_dir=Path("outputs/autolabel"),
+)
+
+# Or use UniversalDetector for a prompt-driven pipeline that mirrors the
+# tree-focused example shared in the issue but works for any concept and keeps
+# the dependency footprint minimal.
+detector = UniversalDetector()
+detector.detect(
+    image_path="data/example.jpg",
+    output_dir="outputs/detections/example",
+    top_k=10,
+    prompt="bolt . screw . component .",
 )
 ```
 
