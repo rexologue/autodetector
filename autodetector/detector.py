@@ -396,6 +396,20 @@ class UniversalDetector:
             if mask.ndim == 3:
                 mask = mask[0]
             mask_bool = mask.astype(bool)
+            height, width = overlay.shape[:2]
+            if mask_bool.shape != (height, width):
+                # SAM occasionally returns masks with transposed dimensions when the
+                # source image has been rotated through EXIF metadata.  Align the
+                # mask with the image before applying the overlay.
+                if mask_bool.T.shape == (height, width):
+                    mask_bool = mask_bool.T
+                else:
+                    mask_resized = cv2.resize(
+                        mask_bool.astype(np.uint8),
+                        (width, height),
+                        interpolation=cv2.INTER_NEAREST,
+                    )
+                    mask_bool = mask_resized.astype(bool)
             blended = overlay[mask_bool].astype(np.float32) * 0.5 + color * 0.5
             overlay[mask_bool] = blended.astype(np.uint8)
         return overlay
